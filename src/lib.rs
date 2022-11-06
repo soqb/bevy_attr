@@ -1,4 +1,4 @@
-//! Automatic management of highly modular values with minimal overhead.
+//! Automatic management of highly modular, highly parallel values with minimal overhead.
 //!
 //! Good examples of things to use this crate for are in-game stats, and
 //! systems like health management (both maximum health and health could be implemented as [attributes][Attribute]).

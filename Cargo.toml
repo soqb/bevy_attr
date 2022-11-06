@@ -1,7 +1,12 @@
 [package]
 name = "bevy_attr"
-version = "0.1.0"
+version = "0.1.0-dev"
 edition = "2021"
+
+description = "Automatic management of highly modular, highly parallel values with minimal overhead"
+license = "MIT OR Apache-2.0"
+keywords = ["bevy", "gamedev"]
+categories = ["game-development"]
 
 [dependencies]
 bevy-trait-query = { git = "https://github.com/JoJoJet/bevy-trait-query", rev = "d7475a7bf3dbe97ac91554e55878fa08f87b4b4b" }
