@@ -1,0 +1,12 @@
+[package]
+name = "bevy_attr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy-trait-query = { git = "https://github.com/JoJoJet/bevy-trait-query", rev = "d7475a7bf3dbe97ac91554e55878fa08f87b4b4b" }
+
+[dependencies.bevy]
+git = "https://github.com/bevyengine/bevy"
+rev = "694c980c821c758f3d272e77a0dc7a75107d7ade"
+default-features = false
