@@ -1,6 +1,6 @@
 # bevy_attr
 [![Crates.io](https://img.shields.io/crates/v/bevy_attr.svg)](https://crates.io/crates/bevy_attr)
-![MIT/Apache 2.0](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)]
+![MIT/Apache 2.0](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)
 [![Docs.rs](https://img.shields.io/badge/docs.rs-bevy_attr-ffffff)](https://docs.rs/bevy_attr/latest/bevy_attr)
 [![GitHub](https://img.shields.io/badge/github-istanbul--not--constantinople/bevy_attr-8da0cb?&logo=github)](https://github.com/istanbul-not-constantinople/bevy_attr)
 
