@@ -2,7 +2,7 @@
 [![Crates.io](https://img.shields.io/crates/v/bevy_attr.svg)](https://crates.io/crates/bevy_attr)
 ![MIT/Apache 2.0](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)
 [![Docs.rs](https://img.shields.io/badge/docs.rs-bevy_attr-ffffff)](https://docs.rs/bevy_attr/latest/bevy_attr)
-[![GitHub](https://img.shields.io/badge/github-istanbul--not--constantinople/bevy_attr-8da0cb?&logo=github)](https://github.com/istanbul-not-constantinople/bevy_attr)
+[![GitHub](https://img.shields.io/badge/github-soqb/bevy_attr-8da0cb?&logo=github)](https://github.com/soqb/bevy_attr)
 
 Automatic management of highly modular, highly parallel values in [Bevy](https://bevyengine.org) with minimal overhead.
 
@@ -16,4 +16,4 @@ The relationship between the [`Attribute`](https://docs.rs/bevy_attr/latest/bevy
 
 In a Bevy app, example uses of attributes could be stat systems where `Strength` and `Endurance` both implement the `Attribute` trait and whose modifiers are updated infrequently, or more dynamic systems where `Health` and `MaxHealth` implement it. Since both attributes and modifiers are just components, in that example, it may be a good idea to have `MaxHealth` be a modifier for `Health`.
 
-[View the examples here](https://github.com/istanbul-not-constantinople/bevy_attr/tree/main/examples)
+[View the examples here](https://github.com/soqb/bevy_attr/tree/main/examples)
