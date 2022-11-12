@@ -8,7 +8,7 @@
 //! [the examples]: https://github.com/istanbul-not-constantinople/bevy_attr/tree/main/examples
 
 use core::fmt;
-use std::{cmp::Ordering, marker::PhantomData, any::TypeId};
+use std::{cmp::Ordering, marker::PhantomData};
 
 use bevy::prelude::*;
 use bevy_trait_query::RegisterExt;
@@ -57,7 +57,7 @@ impl<T: Default> Reset for T {
 /// When a modifier is changed, the attribute is marked with [`DirtyAttr`] and a system runs,
 /// first [resetting][Reset] the value of the attribute,
 /// and then applying each modifier attached to the same entity,
-/// sorted by their [priority][Modifier::priority].
+/// sorted by their [priority][Modifier::PRIORITY].
 ///
 /// All attributes should be registered by adding [`AttributePlugin`]s to your app.
 ///
@@ -142,8 +142,62 @@ impl<T: Default> Reset for T {
 /// ```
 pub trait Attribute: Component + Reset {}
 
+/// Indicates the priority of a modifier.
+///
+/// New priorities are created with [`ZERO`] (the default priority), [`after`], and [`before`].
+///
+/// # Examples
+/// ```rust
+/// use bevy_attr::{ModifierPriority, Attribute, Modifier};
+/// use bevy::prelude::*;
+///
+/// #[derive(Component, Default)]
+/// struct MyAttribute;
+///
+/// impl Attribute for MyAttribute {}
+///
+/// #[derive(Component)]
+/// struct ModifierA;
+///
+/// impl Modifier for ModifierA {
+///     type Attr = MyAttribute;
+///
+///     // the default priority.
+///     const PRIORITY: ModifierPriority<Self::Attr> = ModifierPriority::ZERO;
+///
+///     fn apply(&self, _: &mut Self::Attr) {}
+/// }
+///
+/// #[derive(Component)]
+/// struct ModifierB;
+///
+/// impl Modifier for ModifierB {
+///     type Attr = MyAttribute;
+///
+///     // immediately after the default priority.
+///     const PRIORITY: ModifierPriority<Self::Attr> = ModifierA::PRIORITY.after();
+///
+///     fn apply(&self, _: &mut Self::Attr) {}
+/// }
+///
+/// #[derive(Component)]
+/// struct EarlyModifier;
+///
+/// impl Modifier for EarlyModifier {
+///     type Attr = MyAttribute;
+///
+///     // before the default priority.
+///     const PRIORITY: ModifierPriority<Self::Attr> = ModifierA::PRIORITY.before();
+///
+///     fn apply(&self, _: &mut Self::Attr) {}
+/// }
+/// ```
+///
+/// [`ZERO`]: [`ModifierPriority::ZERO`]
+/// [`after`]: [`ModifierPriority::after`]
+/// [`before`]: [`ModifierPriority::before`]
 pub struct ModifierPriority<A: Attribute> {
-    index: i32,
+    index: isize,
     _marker: PhantomData<A>,
 }
 
@@ -156,46 +210,61 @@ impl<A: Attribute> fmt::Debug for ModifierPriority<A> {
 }
 
 impl<A: Attribute> ModifierPriority<A> {
-    pub(self) const fn new(index: i32) -> Self {
+    pub(self) const fn new(index: isize) -> Self {
         Self {
             index,
             _marker: PhantomData,
         }
     }
 
+    /// The default priority.
     pub const ZERO: Self = Self::new(0);
-
+    
+    /// Returns a new priority immediately after `self`.
     pub const fn after(self) -> Self {
         Self::new(self.index + 1)
     }
 
+    /// Returns a new priority immediately before `self`
     pub const fn before(self) -> Self {
         Self::new(self.index - 1)
     }
+}
 
-    pub(crate) fn cmp_with(self, b: ModifierPriority<A>, type_id_a: TypeId, type_id_b: TypeId) -> Ordering {
-        match self.index.cmp(&b.index) {
-            Ordering::Equal => {},
-            ord => return ord,
-        }
-
-        type_id_a.cmp(&type_id_b)
+impl<A: Attribute> PartialEq for ModifierPriority<A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
     }
 }
 
-pub trait HasModifierPriority<A: Attribute> {
-    const PRIORITY: ModifierPriority<A>;
+impl<A: Attribute> Eq for ModifierPriority<A> {}
+
+impl<A: Attribute> PartialOrd for ModifierPriority<A> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
+impl<A: Attribute> Ord for ModifierPriority<A> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
+/// A generic version of [`Modifier`].
+/// 
+/// See [`Modifier`] for more info.
 #[bevy_trait_query::queryable]
 pub trait ModifierGeneric<A: Attribute>: Send + Sync + 'static {
-    /// Returns the signed priority of the modifier.
+    /// Returns the priority of the modifier.
     ///
-    /// This method should be implemented for most modifiers
-    /// since most sequences of operations are order-dependent.
-    ///
-    /// By default the priority is zero.
+    /// See [`Modifier::PRIORITY`] for more info.
     fn priority(&self) -> ModifierPriority<A>;
+
+    /// Returns whether this modifier is dependent on an exact order.
+    ///
+    /// See [`Modifier::IS_ORDER_INDEPENDENT`] for more info.
+    fn is_order_indepedent(&self) -> bool { false }
 
     /// Applies the modifier to an instance of its associated attribute.
     fn apply(&self, attr: &mut A);
@@ -207,18 +276,28 @@ pub trait ModifierGeneric<A: Attribute>: Send + Sync + 'static {
 ///
 /// All modifiers should be registered by adding a [`ModifierPlugin`] to your app.
 ///
+/// For more flexibility on which attributes modifiers can be for see [`ModifierGeneric`].
+///
 /// See the [`Attribute`] trait for a more detailed overview.
 pub trait Modifier: Send + Sync + 'static {
     /// The attribute that this modifier modifies.
     type Attr: Attribute;
 
-    /// Returns the signed priority of the modifier.
+    /// The priority of the modifier.
     ///
-    /// This method should be implemented for most modifiers
-    /// since most sequences of operations are order-dependent.
-    ///
-    /// By default the priority is zero.
+    /// Most sequences of operations are order-dependent,
+    /// so care should be taken when implementing.
     const PRIORITY: ModifierPriority<Self::Attr>;
+
+    /// Whether this modifier is dependent on an exact order defined by [`PRIORITY`].
+    ///
+    /// Being `true` will surpress order-ambiguity errors
+    /// and may permit runtime optimizations in the future.
+    /// 
+    /// The default value is `false` and it is rare to need to overwrite this.
+    ///
+    /// [`PRIORITY`]: [`Modifier::PRIORITY`].
+    const IS_ORDER_INDEPENDENT: bool = false;
 
     /// Applies the modifier to an instance of its associated attribute.
     fn apply(&self, attr: &mut Self::Attr);
@@ -227,6 +306,10 @@ pub trait Modifier: Send + Sync + 'static {
 impl<M: Modifier> ModifierGeneric<M::Attr> for M {
     fn priority(&self) -> ModifierPriority<M::Attr>  {
         M::PRIORITY
+    }
+
+    fn is_order_indepedent(&self) -> bool {
+        M::IS_ORDER_INDEPENDENT
     }
 
     fn apply(&self, attr: &mut M::Attr) {
@@ -238,10 +321,6 @@ trait ModifierExt<A: Attribute>: ModifierGeneric<A> {
     #[cfg(debug_assertions)]
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
-    }
-
-    fn type_id(&self) -> TypeId {
-        TypeId::of::<Self>()
     }
 }
 impl<M: ModifierGeneric<A> + ?Sized + 'static, A: Attribute> ModifierExt<A> for M {}
@@ -260,14 +339,16 @@ fn refresh_dirty_attr<A: Attribute>(
         debug!("some modifiers have changed!");
         let mut mods: Vec<_> = mods.map_or_else(Vec::new, |mods| mods.iter().collect());
         mods.sort_unstable_by(|a, b| {
-            let order = a.priority().cmp_with(b.priority(), a.type_id(), b.type_id());
+            let order = a.priority().cmp(&b.priority());
             #[cfg(debug_assertions)]
             if let Ordering::Equal = order {
-                warn!(
-                    "ambiguity between the order of two modifiers ({} and {} have the same priority)",
-                    a.type_name(),
-                    b.type_name(),
-                );
+                if a.is_order_indepedent() || b.is_order_indepedent() {
+                    warn!(
+                        "ambiguity between the order of two modifiers ({} and {} have the same priority)",
+                        a.type_name(),
+                        b.type_name(),
+                    );
+                }
             }
             order
         });
@@ -288,7 +369,7 @@ impl<A: Attribute> Plugin for AttributePlugin<A> {
     }
 }
 
-/// Registers the required information for a [`Modifier`].
+/// Registers the required information for a [`ModifierGeneric`].
 ///
 /// The relevant [`AttributePlugin`] should also be added to your app.
 pub struct ModifierGenericPlugin<M: ModifierGeneric<A>, A: Attribute>(PhantomData<(M, A)>);
@@ -356,6 +437,9 @@ impl<M: ModifierGeneric<A> + Component, A: Attribute> Plugin for ModifierGeneric
     }
 }
 
+/// Registers the required information for a [`Modifier`].
+///
+/// The relevant [`AttributePlugin`] should also be added to your app.
 pub type ModifierPlugin<M> = ModifierGenericPlugin<M, <M as Modifier>::Attr>;
 
 #[cfg(test)]
