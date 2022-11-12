@@ -6,7 +6,7 @@ use bevy::{
     time::FixedTimestep,
 };
 
-use bevy_attr::{Attribute, AttributePlugin, Modifier, ModifierPlugin};
+use bevy_attr::{Attribute, AttributePlugin, Modifier, ModifierPlugin, ModifierPriority};
 
 #[derive(Component, Deref, DerefMut, Default)]
 struct Health(usize);
@@ -31,6 +31,8 @@ impl Modifier for ExtraMaxHealthCharm {
     fn apply(&self, max_health: &mut MaxHealth) {
         **max_health += 10;
     }
+
+    const PRIORITY: ModifierPriority<Self::Attr> = ModifierPriority::ZERO;
 }
 
 // since `Health` and `MaxHealth` will both be inserted onto the same entity,
@@ -39,14 +41,11 @@ impl Modifier for ExtraMaxHealthCharm {
 impl Modifier for MaxHealth {
     type Attr = Health;
 
-    fn priority(&self) -> isize {
-        // first modifer
-        0
-    }
-
     fn apply(&self, health: &mut Health) {
         **health += **self
     }
+
+    const PRIORITY: ModifierPriority<Self::Attr> = ModifierPriority::ZERO;
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -55,15 +54,12 @@ struct Damage(usize);
 impl Modifier for Damage {
     type Attr = Health;
 
-    fn priority(&self) -> isize {
-        // after `MaxHealth` in order.
-        1
-    }
-
     fn apply(&self, health: &mut Health) {
         // set to zero if would be negative.
         **health = health.saturating_sub(**self);
     }
+
+    const PRIORITY: ModifierPriority<Self::Attr> = MaxHealth::PRIORITY.after();
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -162,7 +158,7 @@ fn log_health(actors: Query<(&Actor, &Health, &MaxHealth)>) {
 fn main() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins).add_plugin(LogPlugin {
-        level: Level::INFO,
+        level: Level::TRACE,
         ..Default::default()
     });
 

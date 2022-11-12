@@ -9,9 +9,8 @@ keywords = ["bevy", "gamedev"]
 categories = ["game-development"]
 
 [dependencies]
-bevy-trait-query = { git = "https://github.com/JoJoJet/bevy-trait-query", rev = "d7475a7bf3dbe97ac91554e55878fa08f87b4b4b" }
+bevy-trait-query = { version = "0.1" }
 
 [dependencies.bevy]
-git = "https://github.com/bevyengine/bevy"
-rev = "694c980c821c758f3d272e77a0dc7a75107d7ade"
+version = "0.9"
 default-features = false

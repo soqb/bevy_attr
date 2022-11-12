@@ -7,7 +7,8 @@
 //!
 //! [the examples]: https://github.com/istanbul-not-constantinople/bevy_attr/tree/main/examples
 
-use std::{cmp::Ordering, marker::PhantomData};
+use core::fmt;
+use std::{cmp::Ordering, marker::PhantomData, any::TypeId};
 
 use bevy::prelude::*;
 use bevy_trait_query::RegisterExt;
@@ -65,7 +66,8 @@ impl<T: Default> Reset for T {
 /// # Examples
 /// ```rust
 /// use bevy::prelude::*;
-/// use bevy_attr::{AttributePlugin, ModifierPlugin, Attribute, Modifier};
+/// use bevy::log::{Level, LogPlugin};
+/// use bevy_attr::{AttributePlugin, ModifierPlugin, Attribute, Modifier, ModifierPriority};
 ///
 /// // define our attribute component.
 /// #[derive(Component, Deref, DerefMut)]
@@ -93,9 +95,15 @@ impl<T: Default> Reset for T {
 ///     fn apply(&self, value: &mut MaxHealth) {
 ///         **value += 50;
 ///     }
+///
+///     const PRIORITY: ModifierPriority<MaxHealth> = ModifierPriority::ZERO;
 /// }
 ///
 /// let mut app = App::new();
+/// app.add_plugins(MinimalPlugins).add_plugin(LogPlugin {
+///     level: Level::TRACE,
+///     ..Default::default()
+/// });
 ///
 /// // add the relevant plugins to our app.
 /// app.add_plugin(AttributePlugin::<MaxHealth>::default());
@@ -106,6 +114,7 @@ impl<T: Default> Reset for T {
 ///     .spawn((MaxHealth::default(), ExtraMaxHealth))
 ///     .id();
 ///
+/// app.update();
 /// app.update();
 /// // during this update:
 /// // 1. In `CoreStage::Update`, the `ModifierPlugin` notices that the `ExtraMaxHealth` modifier was added
@@ -118,10 +127,12 @@ impl<T: Default> Reset for T {
 /// {
 ///     let mut entity = app.world.get_entity_mut(id).unwrap();
 ///     let max_health = entity.get::<MaxHealth>().unwrap();
+///
 ///     assert_eq!(**max_health, 150);
 ///     entity.remove::<ExtraMaxHealth>();
 /// }
 ///
+/// app.update();
 /// app.update();
 ///
 /// {
@@ -131,6 +142,65 @@ impl<T: Default> Reset for T {
 /// ```
 pub trait Attribute: Component + Reset {}
 
+pub struct ModifierPriority<A: Attribute> {
+    index: i32,
+    _marker: PhantomData<A>,
+}
+
+impl<A: Attribute> fmt::Debug for ModifierPriority<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModifierPriority")
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
+impl<A: Attribute> ModifierPriority<A> {
+    pub(self) const fn new(index: i32) -> Self {
+        Self {
+            index,
+            _marker: PhantomData,
+        }
+    }
+
+    pub const ZERO: Self = Self::new(0);
+
+    pub const fn after(self) -> Self {
+        Self::new(self.index + 1)
+    }
+
+    pub const fn before(self) -> Self {
+        Self::new(self.index - 1)
+    }
+
+    pub(crate) fn cmp_with(self, b: ModifierPriority<A>, type_id_a: TypeId, type_id_b: TypeId) -> Ordering {
+        match self.index.cmp(&b.index) {
+            Ordering::Equal => {},
+            ord => return ord,
+        }
+
+        type_id_a.cmp(&type_id_b)
+    }
+}
+
+pub trait HasModifierPriority<A: Attribute> {
+    const PRIORITY: ModifierPriority<A>;
+}
+
+#[bevy_trait_query::queryable]
+pub trait ModifierGeneric<A: Attribute>: Send + Sync + 'static {
+    /// Returns the signed priority of the modifier.
+    ///
+    /// This method should be implemented for most modifiers
+    /// since most sequences of operations are order-dependent.
+    ///
+    /// By default the priority is zero.
+    fn priority(&self) -> ModifierPriority<A>;
+
+    /// Applies the modifier to an instance of its associated attribute.
+    fn apply(&self, attr: &mut A);
+}
+
 /// A modifier on an [`Attribute`].
 ///
 /// Modifiers should always be components.
@@ -138,7 +208,6 @@ pub trait Attribute: Component + Reset {}
 /// All modifiers should be registered by adding a [`ModifierPlugin`] to your app.
 ///
 /// See the [`Attribute`] trait for a more detailed overview.
-#[bevy_trait_query::queryable]
 pub trait Modifier: Send + Sync + 'static {
     /// The attribute that this modifier modifies.
     type Attr: Attribute;
@@ -149,21 +218,33 @@ pub trait Modifier: Send + Sync + 'static {
     /// since most sequences of operations are order-dependent.
     ///
     /// By default the priority is zero.
-    fn priority(&self) -> isize {
-        0
-    }
+    const PRIORITY: ModifierPriority<Self::Attr>;
 
     /// Applies the modifier to an instance of its associated attribute.
     fn apply(&self, attr: &mut Self::Attr);
 }
 
-trait ModifierExt: Modifier {
+impl<M: Modifier> ModifierGeneric<M::Attr> for M {
+    fn priority(&self) -> ModifierPriority<M::Attr>  {
+        M::PRIORITY
+    }
+
+    fn apply(&self, attr: &mut M::Attr) {
+        <M as Modifier>::apply(self, attr)
+    }
+}
+
+trait ModifierExt<A: Attribute>: ModifierGeneric<A> {
     #[cfg(debug_assertions)]
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
 }
-impl<M: Modifier + ?Sized + 'static> ModifierExt for M {}
+impl<M: ModifierGeneric<A> + ?Sized + 'static, A: Attribute> ModifierExt<A> for M {}
 
 /// Registers the required information for an [`Attribute`].
 ///
@@ -172,13 +253,14 @@ impl<M: Modifier + ?Sized + 'static> ModifierExt for M {}
 pub struct AttributePlugin<A: Attribute>(PhantomData<A>);
 
 fn refresh_dirty_attr<A: Attribute>(
-    mut attrs: Query<(Entity, &mut A, Option<&dyn Modifier<Attr = A>>), With<DirtyAttr<A>>>,
+    mut attrs: Query<(Entity, &mut A, Option<&dyn ModifierGeneric<A>>), With<DirtyAttr<A>>>,
     mut commands: Commands,
 ) {
     for (dirty, mut attr, mods) in attrs.iter_mut() {
+        debug!("some modifiers have changed!");
         let mut mods: Vec<_> = mods.map_or_else(Vec::new, |mods| mods.iter().collect());
         mods.sort_unstable_by(|a, b| {
-            let order = a.priority().cmp(&b.priority());
+            let order = a.priority().cmp_with(b.priority(), a.type_id(), b.type_id());
             #[cfg(debug_assertions)]
             if let Ordering::Equal = order {
                 warn!(
@@ -202,17 +284,6 @@ fn refresh_dirty_attr<A: Attribute>(
 
 impl<A: Attribute> Plugin for AttributePlugin<A> {
     fn build(&self, app: &mut App) {
-        /// necessary without [bevy-trait-query#11]
-        ///
-        /// [bevy-trait-query#11]: https://github.com/JoJoJet/bevy-trait-query/pull/11
-        #[derive(Component)]
-        struct TraitQueryWorkaround<B: Attribute>(PhantomData<B>);
-        impl<B: Attribute> Modifier for TraitQueryWorkaround<B> {
-            type Attr = B;
-
-            fn apply(&self, _: &mut B) {}
-        }
-        // app.register_component_as::<dyn ModifierQueryable<A>, TraitQueryWorkaround<A>>();
         app.add_system_to_stage(CoreStage::PostUpdate, refresh_dirty_attr::<A>);
     }
 }
@@ -220,9 +291,9 @@ impl<A: Attribute> Plugin for AttributePlugin<A> {
 /// Registers the required information for a [`Modifier`].
 ///
 /// The relevant [`AttributePlugin`] should also be added to your app.
-pub struct ModifierPlugin<M: Modifier>(PhantomData<M>);
+pub struct ModifierGenericPlugin<M: ModifierGeneric<A>, A: Attribute>(PhantomData<(M, A)>);
 
-impl<M: Modifier> Default for ModifierPlugin<M> {
+impl<M: ModifierGeneric<A>, A: Attribute> Default for ModifierGenericPlugin<M, A> {
     fn default() -> Self {
         Self(PhantomData)
     }
@@ -238,42 +309,54 @@ impl<A: Attribute> Default for DirtyAttr<A> {
     }
 }
 
-fn modifier_changed<M: Modifier + Component>(
-    changed: Query<Entity, (Changed<M>, Without<DirtyAttr<M::Attr>>)>,
+fn modifier_changed<M: ModifierGeneric<A> + Component, A: Attribute>(
+    changed: Query<Entity, (Changed<M>, Without<DirtyAttr<A>>)>,
     mut commands: Commands,
 ) {
     for entity in &changed {
+        #[cfg(debug_assertions)]
+        trace!(
+            "modifier {} changed on {:?}",
+            std::any::type_name::<M>(),
+            entity
+        );
         let mut commands = commands.entity(entity);
-        commands.insert(DirtyAttr::<M::Attr>::default());
+        commands.insert(DirtyAttr::<A>::default());
     }
 }
 
-fn modifier_removed<M: Modifier + Component>(
+fn modifier_removed<M: ModifierGeneric<A> + Component, A: Attribute>(
     removed: RemovedComponents<M>,
-
     mut commands: Commands,
 ) {
     for entity in &removed {
-        info!("{} removed from {:?}", std::any::type_name::<M>(), entity);
+        #[cfg(debug_assertions)]
+        trace!(
+            "modifier {} removed from {:?}",
+            std::any::type_name::<M>(),
+            entity
+        );
         let Some(mut commands) = commands.get_entity(entity) else {
             continue;
         };
-        commands.insert(DirtyAttr::<M::Attr>::default());
+        commands.insert(DirtyAttr::<A>::default());
     }
 }
 
-impl<M: Modifier + Component> Plugin for ModifierPlugin<M> {
+impl<M: ModifierGeneric<A> + Component, A: Attribute> Plugin for ModifierGenericPlugin<M, A> {
     fn build(&self, app: &mut App) {
         app.add_system_set_to_stage(
             CoreStage::PostUpdate,
             SystemSet::new()
-                .before(refresh_dirty_attr::<M::Attr>)
-                .with_system(modifier_changed::<M>)
-                .with_system(modifier_removed::<M>),
+                .before(refresh_dirty_attr::<A>)
+                .with_system(modifier_changed::<M, A>)
+                .with_system(modifier_removed::<M, A>),
         );
-        app.register_component_as::<dyn Modifier<Attr = M::Attr>, M>();
+        app.register_component_as::<dyn ModifierGeneric<A>, M>();
     }
 }
+
+pub type ModifierPlugin<M> = ModifierGenericPlugin<M, <M as Modifier>::Attr>;
 
 #[cfg(test)]
 mod tests {}
