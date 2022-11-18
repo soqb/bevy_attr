@@ -8,7 +8,6 @@ Automatic management of highly modular, highly parallel values in [Bevy](https:/
 
 |bevy version|crate version|
 |------------|-------------|
-|0.9.0-dev   |0.1.0-dev    |
 |0.9.0       |0.1.0        |
 
 This crate consists of attributes which are components that contain simple values and modifiers (also components) which automatically edit the values of attributes.
